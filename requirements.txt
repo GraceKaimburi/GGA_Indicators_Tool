@@ -59,7 +59,7 @@ tornado==6.4.2
 tqdm==4.67.1
 typing_extensions==4.12.2
 tzdata==2025.1
-urllib3==2.3.0
+urllib3<2.0
 watchdog==6.0.0
 Werkzeug==3.0.6
 zipp==3.21.0
@@ -70,6 +70,6 @@ seaborn==0.12.2
 
 # Google Drive integration (optional)
 google-api-python-client==2.100.0
-google-auth==2.22.0
+google-auth>=2.26.1
 google-auth-httplib2==0.1.0
 google-auth-oauthlib==1.0.0
