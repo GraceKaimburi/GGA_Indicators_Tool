@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 import zipfile
 import tempfile
 
+# ==========================================
+# PART 1: SETUP AND CONFIGURATION
+# ==========================================
+
 # Force disable Google Drive integration (remove this line once you have credentials.json)
 drive_enabled = False
 
@@ -21,10 +25,11 @@ DRIVE_FOLDER_ID = "1V9oik7onvQpvyl4y9mUh5MPOmom4GrkO"
 # Set Streamlit page config to use full screen width
 st.set_page_config(layout="wide", page_title="GGA Indicators - Tagging & Selection Management System")
 
-# Apply custom CSS for improved UI
-# Update the CSS for the indicator cards in your app.py file
-# Replace the existing CSS block with this one that uses dark theme for cards
+# Default file paths
+DEFAULT_EXCEL_FILE = 'Indicators_1000.xlsx'
+TEMPLATE_FILE = 'Indicators_1000.xlsx'
 
+# Apply custom CSS for improved UI
 st.markdown("""
 <style>
     .main-header {
@@ -115,6 +120,34 @@ st.markdown("""
         font-size: 12px;
         font-weight: bold;
     }
+    /* Score display styling */
+    .score-badge {
+        background-color: #2a4c64; 
+        color: #ffffff;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: bold;
+        float: right;
+    }
+    .score-progress {
+        width: 100%;
+        height: 20px;
+        background-color: #333; 
+        border-radius: 10px; 
+        overflow: hidden; 
+        margin: 10px 0;
+    }
+    .score-progress-bar {
+        height: 100%;
+        background-color: #0078ff;
+    }
+    .score-breakdown {
+        background-color: #1e1e1e;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 15px;
+    }
     /* Also fix any white backgrounds in the app */
     .stExpander {
         background-color: #1e1e1e !important;
@@ -128,6 +161,92 @@ st.markdown("""
     /* Fix other potential white backgrounds */
     div[data-testid="stVerticalBlock"] {
         background-color: transparent !important;
+    }
+    /* Improve text contrast */
+    p, li, label, .stCheckbox, .stRadio {
+        color: white !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Make section headers more prominent */
+    .sub-header, h3, h4, h5 {
+        color: #00bfff !important;
+        font-weight: 600 !important;
+        margin-top: 20px !important;
+    }
+    
+    /* Improve checkbox visibility */
+    .stCheckbox > label {
+        color: white !important;
+        font-weight: 500 !important;
+        background-color: rgba(30, 30, 30, 0.7) !important;
+        padding: 5px 10px !important;
+        border-radius: 5px !important;
+        margin-bottom: 5px !important;
+    }
+    
+    /* Improve info icon visibility */
+    [data-testid="stHelperIcon"] {
+        color: #00bfff !important;
+        background-color: rgba(0, 191, 255, 0.1) !important;
+        border-radius: 50% !important;
+        padding: 2px !important;
+    }
+    
+    /* Improve non-editable field appearance */
+    .stInfo {
+        background-color: #1e3045 !important;
+        color: white !important;
+        border-color: #2a4c64 !important;
+    }
+    
+    /* Make the progress bar more visible */
+    .score-progress {
+        height: 25px !important;
+        background-color: #333344 !important;
+    }
+    
+    .score-progress-bar {
+        background-color: #0078ff !important;
+        background-image: linear-gradient(45deg, 
+                          rgba(255, 255, 255, 0.15) 25%, 
+                          transparent 25%, 
+                          transparent 50%, 
+                          rgba(255, 255, 255, 0.15) 50%, 
+                          rgba(255, 255, 255, 0.15) 75%, 
+                          transparent 75%, 
+                          transparent) !important;
+        background-size: 1rem 1rem !important;
+    }
+    
+    /* Improve indicator header visibility */
+    .indicator-card strong {
+        color: white !important;
+        font-size: 16px !important;
+    }
+    
+    /* Add subtle hover effect to buttons */
+    .stButton > button:hover {
+        border-color: #00bfff !important;
+        box-shadow: 0 0 5px rgba(0, 191, 255, 0.5) !important;
+    }
+            
+    /* Target hint text specifically */
+    div[data-baseweb="tooltip"] {
+        background-color: #1e3045 !important;
+        color: white !important;
+        border: 1px solid #2a4c64 !important;
+        padding: 1px !important;
+        border-radius: 1px !important;
+        font-size: 1px !important;
+    }
+    
+    /* Make checkbox container clearer */
+    div.row-widget.stCheckbox {
+        padding: 1px !important;
+        margin: 1px 0 !important;
+        background-color: rgba(30, 30, 30, 0.3) !important;
+        border-radius: 1px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -154,56 +273,81 @@ except Exception as e:
     drive_enabled = False
     st.sidebar.warning(f"Google Drive integration disabled: {e}")
 
-# Default file paths
-DEFAULT_EXCEL_FILE = 'Indicators_1000.xlsx'
-TEMPLATE_FILE = 'Indicators_1000.xlsx'
+# --- SCORING SYSTEM ---
+def calculate_indicator_score(row):
+    """
+    Calculate a score for an indicator based on various attributes
+    Max score is 5 points
+    """
+    score = 0
+    
+    # 1. Global/Contextual Status (0-1 points)
+    global_status = str(row.get('Global/Contextual Status', '')).strip()
+    if global_status == 'Both':
+        score += 1.0  # Both global and contextual
+    elif global_status == 'Global':
+        score += 0.75  # Global only
+    # Contextual only gets 0 points
+    
+    # 2. Thematic Interlinkages (0-1 points)
+    # Count thematic areas by looking at the 'Thematic Area' column
+    thematic_area = str(row.get('Thematic Area', '')).strip()
+    # This checks if the thematic area contains commas (multiple entries)
+    thematic_areas = thematic_area.split(',')
+    covered_areas = len(thematic_areas)
+    
+    if covered_areas >= 3:
+        score += 1.0
+    elif covered_areas == 2:
+        score += 0.5
+    
+    # 3. Means of Implementation Coverage (0-1 points)
+    moi = str(row.get('Means of Implementation', '')).strip()
+    moi_count = 0
+    if 'Technology' in moi:
+        moi_count += 1
+    if 'Finance' in moi:
+        moi_count += 1
+    if 'Capacity Building' in moi:
+        moi_count += 1
+    if 'Enabling factor' in moi:
+        moi_count += 1
+    
+    if moi_count >= 3:
+        score += 1.0
+    elif moi_count == 2:
+        score += 0.6
+    elif moi_count == 1:
+        score += 0.3
+    
+    # 4. Indicator Type (0-1 point)
+    indicator_type = str(row.get('Indicator Type', '')).strip().lower()
+    if indicator_type in ['input', 'process', 'output', 'outcome']:
+        score += 1.0  # Give full point if valid indicator type
+    
+    # 5. Reporting Status (0-1 point)
+    reporting_status = str(row.get('Already reported?', '')).strip().lower()
+    
+    if reporting_status == "never reported":
+        # Not reported
+        score += 0.0
+    elif "unknown" in reporting_status or "reporting status unknown" in reporting_status:
+        # New indicator with unknown status
+        score += 1.0
+    elif any(framework in reporting_status for framework in ["sdg", "international", "sendai"]):
+        # Reported in established frameworks
+        score += 1.0
+    else:
+        # Default case for other types
+        score += 0.5
+    
+    # Round to 2 decimal places for cleaner display
+    return round(min(score, 5), 2)  # Cap at max 5 points
 
-# --- AUTHENTICATION SYSTEM ---
-# User management with simplified credentials
-def setup_auth():
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    
-    if 'username' not in st.session_state:
-        st.session_state.username = None
-    
-    # Simplified hardcoded credentials for easier access
-    USERS = {
-        'admin': 'admin123',
-        'user1': 'pass123',
-        'user2': 'pass123',
-        'grace': 'pass123',
-        'user3': 'pass123',
-        'user4': 'pass123',
-        'user5': 'pass123',
-    }
-    
-    return USERS
-
-def login_page():
-    USERS = setup_auth()
-    
-    
-    # Display title with direct st.title instead of markdown div
-    st.title("GGA Indicators - Tagging & Selection System")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("### Please log in to continue")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        
-        login_btn = st.button("Login")
-        if login_btn:
-            if username in USERS and USERS[username] == password:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.is_admin = (username == 'admin')
-                st.rerun()
-            else:
-                st.error("Invalid username or password")
-        
-        st.info("Default credentials: Username: 'user1', Password: 'pass123'")
+def calculate_scores_for_dataframe(df):
+    """Calculate scores for all rows in the dataframe"""
+    df['score'] = df.apply(calculate_indicator_score, axis=1)
+    return df
 
 # --- DATA LOADING FUNCTIONS ---
 @st.cache_data(ttl=600)
@@ -212,7 +356,17 @@ def load_excel_data(file_path):
         if not os.path.exists(file_path):
             st.error(f"File not found: {file_path}")
             return pd.DataFrame()
-        return pd.read_excel(file_path)
+        
+        # Check if file is a text file (tab-delimited) or Excel
+        if file_path.endswith('.txt'):
+            df = pd.read_csv(file_path, sep='\t')
+        else:
+            df = pd.read_excel(file_path)
+        
+        # Calculate scores for the dataframe
+        df = calculate_scores_for_dataframe(df)
+        
+        return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
@@ -241,7 +395,10 @@ def load_user_data(username, default_file=DEFAULT_EXCEL_FILE, drive_folder_id=DR
             while not done:
                 status, done = downloader.next_chunk()
             fh.seek(0)
-            return pd.read_excel(fh), user_filename
+            df = pd.read_excel(fh)
+            # Calculate scores for the dataframe
+            df = calculate_scores_for_dataframe(df)
+            return df, user_filename
     except Exception as e:
         st.warning(f"Could not load from Drive: {e}")
     
@@ -298,9 +455,14 @@ def save_user_data(df, filename, drive_folder_id=DRIVE_FOLDER_ID):
             return f"Saved to Drive (ID: {uploaded_file.get('id')})"
     except Exception as e:
         return f"Error saving to Drive: {e}"
+    
+    # ==========================================
+# PART 2: AUTHENTICATION AND APP STRUCTURE
+# ==========================================
 
-# --- MAPPING AND CONSTANTS ---
+# --- CONSTANTS AND MAPPINGS ---
 def get_column_mapping():
+    """Define mappings for column names"""
     return {
         'water': 'Water',
         'health': 'Health',
@@ -312,6 +474,7 @@ def get_column_mapping():
     }
 
 def get_gga_targets():
+    """Get list of GGA targets"""
     return [
         "Input",
         "Process",
@@ -320,9 +483,57 @@ def get_gga_targets():
     ]
 
 def get_moi_fields():
-    return ["Enabling factor", "MOI-finance", "MOI-technology", "MOI-Capacity building"]
+    """Get Means of Implementation fields"""
+    return ["Enabling factor", "MOI Technology", "MOI Finance", "MOI Capacity Building"]
 
-# --- APP CORE FUNCTIONS ---
+# --- AUTHENTICATION SYSTEM ---
+def setup_auth():
+    """Initialize authentication system with user credentials"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if 'username' not in st.session_state:
+        st.session_state.username = None
+    
+    # Simplified hardcoded credentials for easier access
+    USERS = {
+        'admin': 'admin123',
+        'user1': 'pass123',
+        'user2': 'pass123',
+        'grace': 'pass123',
+        'user3': 'pass123',
+        'user4': 'pass123',
+        'user5': 'pass123',
+    }
+    
+    return USERS
+
+def login_page():
+    """Render login page"""
+    USERS = setup_auth()
+    
+    # Display title with direct st.title instead of markdown div
+    st.title("GGA Indicators - Tagging & Selection System")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### Please log in to continue")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        
+        login_btn = st.button("Login")
+        if login_btn:
+            if username in USERS and USERS[username] == password:
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.session_state.is_admin = (username == 'admin')
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+        
+        st.info("Default credentials: Username: 'user1', Password: 'pass123'")
+
+# --- APP STRUCTURE FUNCTIONS ---
 def setup_session_state():
     """Initialize session state variables"""
     if 'current_tab' not in st.session_state:
@@ -355,6 +566,10 @@ def setup_session_state():
                     st.session_state.df['selected_global'] = 0
                 if 'selected_contextual' not in st.session_state.df.columns:
                     st.session_state.df['selected_contextual'] = 0
+                
+                # Calculate scores if they don't exist
+                if 'score' not in st.session_state.df.columns:
+                    st.session_state.df = calculate_scores_for_dataframe(st.session_state.df)
             except Exception as e:
                 st.error(f"Error loading data: {e}")
                 st.session_state.df = pd.DataFrame()  # Create empty DataFrame as fallback
@@ -385,6 +600,7 @@ def app_header():
                (" (Administrator)" if st.session_state.username == 'admin' else ""))
     st.divider()
 
+# --- UTILITY FUNCTIONS ---
 def find_indicator_criteria_cols(df):
     """Find criteria columns in the dataframe"""
     crit_columns = []
@@ -402,7 +618,32 @@ def find_column_by_content(df, keywords):
             return col
     return None
 
-# --- TAB CONTENTS ---
+# --- MAIN APP FUNCTION ---
+def main():
+    """Main application entry point"""
+    setup_auth()
+    
+    if not st.session_state.authenticated:
+        login_page()
+    else:
+        setup_session_state()
+        app_header()
+        
+        # Render the selected tab
+        if st.session_state.current_tab == "Select":
+            select_indicators_tab()
+        elif st.session_state.current_tab == "Tag":
+            tag_indicators_tab()
+        elif st.session_state.current_tab == "Details":
+            view_indicator_details_tab()
+        
+        
+
+    # ==========================================
+# PART 3: TAB FUNCTIONALITY
+# ==========================================
+
+# --- SELECT INDICATORS TAB ---
 def select_indicators_tab():
     """Tab for selecting and filtering indicators"""
     column_mapping = get_column_mapping()
@@ -442,6 +683,10 @@ def select_indicators_tab():
                 selected_type = "All"
                 st.warning(f"No '{indicator_type_col}' column found")
             
+            # Add sorting by score
+            sort_options = ["Score (high to low)", "Score (low to high)", "Alphabetical", "None"]
+            sort_by = st.selectbox("Sort indicators by:", sort_options, index=0)
+            
             show_full_list_checkbox = st.checkbox("Show full list of relevant components and targets", value=False)
             
             # Apply filters
@@ -455,16 +700,14 @@ def select_indicators_tab():
             if selected_type != "All" and indicator_type_col in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df[indicator_type_col] == selected_type]
             
-            # Find criteria columns
-            crit_columns = find_indicator_criteria_cols(filtered_df)
-            
-            if crit_columns:
-                # Convert to numeric first, handling non-numeric values
-                for col in crit_columns:
-                    filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
-                
-                filtered_df['Score'] = filtered_df[crit_columns].sum(axis=1)
-                filtered_df = filtered_df.sort_values(by='Score', ascending=False)
+            # Apply sorting based on selection
+            if sort_by == "Score (high to low)":
+                filtered_df = filtered_df.sort_values(by='score', ascending=False)
+            elif sort_by == "Score (low to high)":
+                filtered_df = filtered_df.sort_values(by='score', ascending=True)
+            elif sort_by == "Alphabetical":
+                if 'Indicators' in filtered_df.columns:
+                    filtered_df = filtered_df.sort_values(by='Indicators')
             
             st.session_state.filtered_df = filtered_df
             
@@ -483,11 +726,13 @@ def select_indicators_tab():
                     thematic_area = row.get('Thematic Area', '')
                     indicator_type = row.get('Indicator Type', '')
                     reporting_status = row.get('Already reported?', '')
+                    score = row.get('score', 0)
                     
-                    # Display indicator card
+                    # Display indicator card with score
                     st.markdown(f"""
                     <div class="indicator-card">
                         <strong>{indicator_name}</strong>
+                        <span class="score-badge">Score: {score}/5</span>
                         <div class="tag-section">
                             <small>Theme: {thematic_area}</small>
                             {f" | <small>Type: {indicator_type}</small>" if indicator_type else ""}
@@ -501,18 +746,20 @@ def select_indicators_tab():
                         st.markdown(f"<div class='tag-pill'>Theme: {thematic_area}</div>", unsafe_allow_html=True)
                         st.markdown(f"<div class='tag-pill'>Type: {indicator_type}</div>", unsafe_allow_html=True)
                         st.markdown(f"<div class='tag-pill'>Status: {reporting_status}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='tag-pill'>MoI: {row.get('Means of Implementation', 'Not specified')}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='tag-pill'>Global/Contextual: {row.get('Global/Contextual Status', 'Not specified')}</div>", unsafe_allow_html=True)
                     
                     # Selection checkboxes
                     col1, col2 = st.columns(2)
                     with col1:
                         global_selected = st.checkbox(
-                            "Select as Global Indicator", 
+                            "Select this Indicator (GLOBAL)", 
                             value=bool(row.get('selected_global', 0)), 
                             key=f"global_{idx}"
                         )
                     with col2:
                         contextual_selected = st.checkbox(
-                            "Select as Contextual Indicator", 
+                            "Select this Indicator (CONTEXTUAL)", 
                             value=bool(row.get('selected_contextual', 0)), 
                             key=f"contextual_{idx}"
                         )
@@ -541,12 +788,17 @@ def select_indicators_tab():
         with tab1:
             st.write(f"**{len(global_selected)} Global Indicators Selected**")
             
+            # Show average score for selected indicators
+            if len(global_selected) > 0 and 'score' in global_selected.columns:
+                avg_score = global_selected['score'].mean()
+                st.write(f"**Average Score: {avg_score:.2f}/5**")
+            
             if report_col in global_selected.columns and not global_selected.empty:
                 # Group by reporting status
                 report_counts = global_selected[report_col].value_counts()
                 st.write("Distribution by reporting framework:")
                 for framework, count in report_counts.items():
-                    st.write(f"- {framework}: {count}")
+                    st.write(f"- {framework}: {count}")            
             
             # Show coverage by thematic area and indicator type
             if 'Thematic Area' in global_selected.columns and 'Indicator Type' in global_selected.columns and not global_selected.empty:
@@ -565,15 +817,23 @@ def select_indicators_tab():
             # Show list of selected indicators
             if not global_selected.empty and 'Indicators' in global_selected.columns:
                 st.write("Selected global indicators:")
-                indicators_list = global_selected['Indicators'].tolist()
-                for i, indicator in enumerate(indicators_list):
-                    st.write(f"{i+1}. {indicator}")
+                # Sort by score
+                sorted_global = global_selected.sort_values(by='score', ascending=False)
+                for i, (idx, row) in enumerate(sorted_global.iterrows()):
+                    indicator_name = row['Indicators']
+                    score = row.get('score', 0)
+                    st.write(f"{i+1}. {indicator_name} (Score: {score:.2f}/5)")
             else:
                 st.info("No global indicators selected yet")
         
         with tab2:
             st.write(f"**{len(contextual_selected)} Contextual Indicators Selected**")
             
+            # Show average score for selected indicators
+            if len(contextual_selected) > 0 and 'score' in contextual_selected.columns:
+                avg_score = contextual_selected['score'].mean()
+                st.write(f"**Average Score: {avg_score:.2f}/5**")
+                
             if report_col in contextual_selected.columns and not contextual_selected.empty:
                 # Group by reporting status
                 report_counts = contextual_selected[report_col].value_counts()
@@ -598,9 +858,12 @@ def select_indicators_tab():
             # Show list of selected indicators
             if not contextual_selected.empty and 'Indicators' in contextual_selected.columns:
                 st.write("Selected contextual indicators:")
-                indicators_list = contextual_selected['Indicators'].tolist()
-                for i, indicator in enumerate(indicators_list):
-                    st.write(f"{i+1}. {indicator}")
+                # Sort by score
+                sorted_contextual = contextual_selected.sort_values(by='score', ascending=False)
+                for i, (idx, row) in enumerate(sorted_contextual.iterrows()):
+                    indicator_name = row['Indicators']
+                    score = row.get('score', 0)
+                    st.write(f"{i+1}. {indicator_name} (Score: {score:.2f}/5)")
             else:
                 st.info("No contextual indicators selected yet")
         
@@ -641,7 +904,8 @@ def select_indicators_tab():
             st.session_state.df['selected_global'] = 0
             st.session_state.df['selected_contextual'] = 0
             st.success("All selections cleared!")
-            
+
+# --- TAG INDICATORS TAB ---
 def tag_indicators_tab():
     """Tab for tagging individual indicators"""
     st.markdown('<div class="sub-header">Indicator Tagging Interface</div>', unsafe_allow_html=True)
@@ -675,14 +939,16 @@ def tag_indicators_tab():
             enabling_cols.append(field)
     
     # Try to find indicator type columns
-    indicator_type_col = 'Indicator Type'  # Use actual column name from your Excel
-    report_col = 'Already reported?'       # Use actual column name from your Excel
+    indicator_type_col = 'Indicator Type'  
+    report_col = 'Already reported?'       
+    thematic_area_col = 'Thematic Area'
+    global_contextual_col = 'Global/Contextual Status'
+    moi_col = 'Means of Implementation'
     
     indicator_cols = []
-    if indicator_type_col in df.columns:
-        indicator_cols.append(indicator_type_col)
-    if report_col in df.columns:
-        indicator_cols.append(report_col)
+    for col in [indicator_type_col, report_col, thematic_area_col, global_contextual_col, moi_col]:
+        if col in df.columns:
+            indicator_cols.append(col)
     
     total_records = len(df)
     current_index = st.session_state.get('current_index', 0)
@@ -774,89 +1040,106 @@ def tag_indicators_tab():
     with st.expander(f"Indicator: {indicator_name}", expanded=True):
         updated_values = {}
         
-        # Indicator selection status
-        st.markdown("##### Indicator Selection Status")
-        status_col1, status_col2 = st.columns(2)
-        with status_col1:
-            global_status = st.checkbox("Selected as Global Indicator", 
-                                     value=bool(row.get('selected_global', 0)),
-                                     key=f"global_status_{i}")
-            df.at[i, 'selected_global'] = 1 if global_status else 0
+        # Show the indicator score
+        score = row.get('score', 0)
+        st.markdown(f"<h5>Indicator Score: {score:.2f}/5</h5>", unsafe_allow_html=True)
         
-        with status_col2:
-            contextual_status = st.checkbox("Selected as Contextual Indicator", 
-                                         value=bool(row.get('selected_contextual', 0)),
-                                         key=f"contextual_status_{i}")
-            df.at[i, 'selected_contextual'] = 1 if contextual_status else 0
+        # Progress bar for score visualization
+        progress_percent = (score / 5) * 100
+        st.markdown(f"""
+            <div class="score-progress">
+                <div class="score-progress-bar" style="width:{progress_percent}%"></div>
+            </div>
+        """, unsafe_allow_html=True)
+        
         
         st.divider()
         
-        # Thematic Area section
-        thematic_area_col = 'Thematic Area'
-        if thematic_area_col in df.columns:
-            st.markdown("##### 1. Thematic Area")
-            options = sorted(df[thematic_area_col].dropna().unique().tolist())
-            if options:
-                current_val = row.get(thematic_area_col, options[0] if options else "")
-                updated_values[thematic_area_col] = st.selectbox(
-                    "Thematic Area", 
-                    options=options,
-                    index=options.index(current_val) if current_val in options else 0,
-                    key=f"thematic_area_{i}",
-                    on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                )
+        # Thematic Interlinkages - editable
+        st.markdown("##### 1. Thematic Interlinkages (Editable)")
+        st.write("You can edit the thematic interlinkages for this indicator:")
         
-        # Indicator Type section
-        if indicator_type_col in df.columns:
-            st.markdown("##### 2. Indicator Type")
-            options = sorted(df[indicator_type_col].dropna().unique().tolist())
-            if options:
-                current_val = row.get(indicator_type_col, options[0] if options else "")
-                updated_values[indicator_type_col] = st.selectbox(
-                    "Indicator Type", 
-                    options=options,
-                    index=options.index(current_val) if current_val in options else 0,
-                    key=f"indicator_type_{i}",
-                    on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                )
+        # Get all available thematic areas for checkboxes
+        available_thematic_areas = []
+        if 'Thematic Area' in df.columns:
+            # Get unique thematic areas across all records
+            all_thematic_areas = set()
+            for area_str in df['Thematic Area'].dropna():
+                areas = [a.strip() for a in area_str.split(',')]
+                all_thematic_areas.update(areas)
+            available_thematic_areas = sorted(list(all_thematic_areas))
         
-        # Reporting Status section
-        if report_col in df.columns:
-            st.markdown("##### 3. Reporting Status")
-            options = sorted(df[report_col].dropna().unique().tolist())
-            if options:
-                current_val = row.get(report_col, options[0] if options else "")
-                updated_values[report_col] = st.selectbox(
-                    "Reporting Status", 
-                    options=options,
-                    index=options.index(current_val) if current_val in options else 0,
-                    key=f"reporting_status_{i}",
-                    on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                )
+        # Current thematic areas
+        current_thematic_areas = []
+        if thematic_area_col in df.columns and pd.notna(row.get(thematic_area_col)):
+            current_thematic_areas = [area.strip() for area in row.get(thematic_area_col, "").split(',')]
         
-        # Other attributes section  
-        if indicator_cols:
-            st.markdown("##### 4. Other Attributes")
-            for col in indicator_cols:
-                if col not in [thematic_area_col, indicator_type_col, report_col] and col in row.index:
-                    # For dropdown fields
-                    options = df[col].dropna().unique().tolist()
-                    if options:
-                        key = f"{col}_{i}"
-                        current_val = row[col] if pd.notna(row[col]) else options[0]
-                        updated_values[col] = st.selectbox(
-                            col, 
-                            options, 
-                            index=options.index(current_val) if current_val in options else 0, 
-                            key=key, 
-                            on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                        )
+        # Create thematic area checkboxes in a grid layout
+        num_cols = 3  # Number of columns in the grid
+        cols = st.columns(num_cols)
+        
+        selected_thematic_areas = []
+        
+        for idx, area in enumerate(available_thematic_areas):
+            with cols[idx % num_cols]:
+                is_selected = area in current_thematic_areas
+                checkbox_key = f"thematic_area_{area}_{i}"
+                area_selected = st.checkbox(
+                    area, 
+                    value=is_selected,
+                    key=checkbox_key,
+                    help=f"Check to indicate this indicator relates to the '{area}' thematic area"
+                )
+                
+                if area_selected:
+                    selected_thematic_areas.append(area)
+                    
+        # If any thematic areas were selected/deselected, mark as needing to be saved
+        if set(selected_thematic_areas) != set(current_thematic_areas):
+            updated_values[thematic_area_col] = ", ".join(selected_thematic_areas)
+            st.session_state['unsaved_changes'] = True
         
         st.session_state['pending_values'] = updated_values
+
+        # Show thematic area - non-editable
+        if thematic_area_col in df.columns:
+            st.markdown("##### 2. Thematic Area (Non-editable)")
+            thematic_area = row.get(thematic_area_col, "Not specified")
+            st.info(f"**Thematic Area:** {thematic_area}")
+        
+        # Show indicator type - non-editable
+        if indicator_type_col in df.columns:
+            st.markdown("##### 3. Indicator Type (Non-editable)")
+            indicator_type = row.get(indicator_type_col, "Not specified")
+            st.info(f"**Indicator Type:** {indicator_type}")
+        
+        # Show reporting status - non-editable
+        if report_col in df.columns:
+            st.markdown("##### 4. Reporting Status (Non-editable)")
+            reporting_status = row.get(report_col, "Not specified")
+            st.info(f"**Reporting Status:** {reporting_status}")
+            
+        # Show Global/Contextual status - non-editable
+        if global_contextual_col in df.columns:
+            st.markdown("##### 5. Global/Contextual Status (Non-editable)")
+            gc_status = row.get(global_contextual_col, "Not specified")
+            st.info(f"**Global/Contextual Status:** {gc_status}")
+            
+        # Show Means of Implementation - non-editable
+        if moi_col in df.columns:
+            st.markdown("##### 6. Means of Implementation (Non-editable)")
+            moi_value = row.get(moi_col, "Not specified")
+            st.info(f"**Means of Implementation:** {moi_value}")
+            
+        # Add Save button at the bottom
+      
         
         if st.button(f"Save Record {i+1}"):
             for col, val in updated_values.items():
-                df.at[i, col] = 'X' if val is True else (' ' if val is False else val)
+                df.at[i, col] = val
+            
+            # Recalculate the score after updates
+            df.at[i, 'score'] = calculate_indicator_score(df.iloc[i])
             
             user_file = f'updated_{st.session_state.username}.xlsx'
             result = save_user_data(df=df, filename=user_file, drive_folder_id=DRIVE_FOLDER_ID)
@@ -864,6 +1147,12 @@ def tag_indicators_tab():
             st.session_state['pending_values'] = {}
             st.success(f"Record {i+1} saved successfully! {result}")
 
+        # if st.button("Save All Changes to File"):
+        #     user_file = f'updated_{st.session_state.username}.xlsx'
+        #     result = save_user_data(df=st.session_state.df, filename=user_file, drive_folder_id=DRIVE_FOLDER_ID)
+        #     st.success(f"All changes saved! {result}")
+
+    # --- VIEW INDICATOR DETAILS TAB (continued) ---
 def view_indicator_details_tab():
     """Tab for viewing detailed information about each indicator"""
     st.markdown('<div class="sub-header">Indicator Details View</div>', unsafe_allow_html=True)
@@ -886,7 +1175,7 @@ def view_indicator_details_tab():
         st.error("Could not find indicator name column in the dataset")
         return
     
-        # Track if any changes are made for download button activation
+    # Track if any changes are made for download button activation
     if 'details_page_changes' not in st.session_state:
         st.session_state.details_page_changes = False
     
@@ -897,6 +1186,36 @@ def view_indicator_details_tab():
         st.warning("No indicators have been selected yet. Please go to the 'Select Indicators' tab to select indicators first.")
         return
     
+    # Add sort options
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        sort_options = ["Score (high to low)", "Score (low to high)", "Alphabetical", "None"]
+        sort_by = st.selectbox("Sort indicators by:", sort_options, index=0)
+        
+        # Apply sorting based on selection
+        if sort_by == "Score (high to low)":
+            selected_df = selected_df.sort_values(by='score', ascending=False)
+        elif sort_by == "Score (low to high)":
+            selected_df = selected_df.sort_values(by='score', ascending=True)
+        elif sort_by == "Alphabetical":
+            if name_col in selected_df.columns:
+                selected_df = selected_df.sort_values(by=name_col)
+    
+    with col2:
+        # Create download button for selected indicators
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            selected_df.to_excel(writer, index=False)
+        output.seek(0)
+        
+        st.download_button(
+            f"Download Selected ({len(selected_df)})",
+            data=output,
+            file_name=f"selected_indicators_{st.session_state.username}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Download all currently selected indicators"
+        )
 
     # Create a dropdown to select an indicator from the SELECTED ones only
     indicators = selected_df[name_col].tolist()
@@ -940,6 +1259,18 @@ def view_indicator_details_tab():
         else:
             st.markdown("<span class='status-badge-unselected'>Not Selected as Contextual</span>", unsafe_allow_html=True)
         
+        # Display Score
+        score = selected_row.get('score', 0)
+        st.markdown(f"#### Score: {score:.2f}/5")
+        
+        # Progress bar for score
+        progress_percent = (score / 5) * 100
+        st.markdown(f"""
+            <div class="score-progress">
+                <div class="score-progress-bar" style="width:{progress_percent}%"></div>
+            </div>
+        """, unsafe_allow_html=True)
+        
         # Try to find description column
         desc_col = None
         for col_name in ['Description', 'description', 'Desc', 'desc']:
@@ -955,290 +1286,186 @@ def view_indicator_details_tab():
         st.markdown("#### Indicator Attributes")
         
         # Create tabs for different attribute types
-        tag_tab1, tag_tab2 = st.tabs(["Thematic Information", "Other Attributes"])
+        tab1, tab2 = st.tabs(["Basic Information", "Score Breakdown"])
         
-        with tag_tab1:
+        with tab1:
             # Thematic Area and Type
             thematic_area = selected_row.get('Thematic Area', 'Not specified')
             indicator_type = selected_row.get('Indicator Type', 'Not specified')
             reporting_status = selected_row.get('Already reported?', 'Not specified')
+            global_contextual = selected_row.get('Global/Contextual Status', 'Not specified')
+            means_implementation = selected_row.get('Means of Implementation', 'Not specified')
             
             st.markdown(f"**Thematic Area:** {thematic_area}")
             st.markdown(f"**Indicator Type:** {indicator_type}")
             st.markdown(f"**Reporting Status:** {reporting_status}")
+            st.markdown(f"**Global/Contextual Status:** {global_contextual}")
+            st.markdown(f"**Means of Implementation:** {means_implementation}")
         
-        with tag_tab2:
-            # Other attributes that might be in the dataset
-            other_attributes = []
-            for col in df.columns:
-                if col not in [name_col, 'Thematic Area', 'Indicator Type', 'Already reported?', 
-                              'selected_global', 'selected_contextual']:
-                    if pd.notna(selected_row.get(col)):
-                        other_attributes.append((col, selected_row[col]))
+        with tab2:
+            # Show score breakdown
+            st.markdown("##### Score Breakdown")
             
-            if other_attributes:
-                st.markdown("**Other Attributes:**")
-                for attr_name, attr_value in other_attributes:
-                    st.markdown(f"- **{attr_name}:** {attr_value}")
+            # 1. Global/Contextual Status
+            gc_status = str(selected_row.get('Global/Contextual Status', '')).strip()
+            gc_points = 0
+            if gc_status == 'Both':
+                gc_points = 1.0
+                gc_explanation = "Both Global and Contextual (+1 point)"
+            elif gc_status == 'Global':
+                gc_points = 0.75
+                gc_explanation = "Global indicator only (+0.75 points)"
             else:
-                st.info("No additional attributes found")
+                gc_explanation = "Contextual indicator only (0 points)"
+            
+            st.markdown(f"**1. Global/Contextual Status:** {gc_explanation}")
+            
+            # 2. Thematic Interlinkages
+            thematic_area = str(selected_row.get('Thematic Area', '')).strip()
+            thematic_areas = thematic_area.split(',')
+            covered_areas = len(thematic_areas)
+            
+            if covered_areas >= 3:
+                tl_points = 1.0
+                tl_explanation = f"Three or more thematic areas ({covered_areas}) (+1 point)"
+            elif covered_areas == 2:
+                tl_points = 0.5
+                tl_explanation = "Two thematic areas (+0.5 points)"
+            else:
+                tl_points = 0
+                tl_explanation = "Single thematic area (0 points)"
+                
+            st.markdown(f"**2. Thematic Interlinkages:** {tl_explanation}")
+            
+            # 3. Means of Implementation Coverage
+            moi = str(selected_row.get('Means of Implementation', '')).strip()
+            moi_count = 0
+            if 'Technology' in moi:
+                moi_count += 1
+            if 'Finance' in moi:
+                moi_count += 1
+            if 'Capacity Building' in moi:
+                moi_count += 1
+            if 'Enabling factor' in moi:
+                moi_count += 1
+            
+            if moi_count >= 3:
+                moi_points = 1.0
+                moi_explanation = f"{moi_count} MOI categories (+1 point)"
+            elif moi_count == 2:
+                moi_points = 0.6
+                moi_explanation = "Two MOI categories (+0.6 points)"
+            elif moi_count == 1:
+                moi_points = 0.3
+                moi_explanation = "One MOI category (+0.3 points)"
+            else:
+                moi_points = 0
+                moi_explanation = "No MOI coverage (0 points)"
+                
+            st.markdown(f"**3. Means of Implementation Coverage:** {moi_explanation}")
+            
+            # 4. Indicator Type
+            indicator_type = str(selected_row.get('Indicator Type', '')).strip().lower()
+            if indicator_type in ['input', 'process', 'output', 'outcome']:
+                it_points = 1.0
+                it_explanation = f"{indicator_type.capitalize()} indicator type (+1 point)"
+            else:
+                it_points = 0
+                it_explanation = "Unknown indicator type (0 points)"
+                
+            st.markdown(f"**4. Indicator Type:** {it_explanation}")
+            
+            # 5. Reporting Status
+            reporting_status = str(selected_row.get('Already reported?', '')).strip().lower()
+            
+            if reporting_status == "never reported":
+                rs_points = 0.0
+                rs_explanation = "Never reported (0 points)"
+            elif "unknown" in reporting_status or "reporting status unknown" in reporting_status:
+                rs_points = 1.0
+                rs_explanation = "New indicator with unknown reporting status (+1 point)"
+            elif any(framework in reporting_status for framework in ["sdg", "international", "sendai"]):
+                rs_points = 1.0
+                rs_explanation = f"Reported in {reporting_status} (+1 point)"
+            else:
+                rs_points = 0.5
+                rs_explanation = "Other reporting status (+0.5 points)"
+                
+            st.markdown(f"**5. Reporting Status:** {rs_explanation}")
+            
+            # Total score
+            total_points = gc_points + tl_points + moi_points + it_points + rs_points
+            st.markdown(f"**Total Score:** {total_points:.2f}/5")
+            
+            # Show this in a nice visual
+            st.markdown("""
+            <table style="width:100%; border-collapse: collapse; margin-top: 20px; background-color: #1e1e1e; border-radius: 10px;">
+                <tr>
+                    <th style="padding: 10px; text-align: left; border-bottom: 1px solid #444;">Score Component</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 1px solid #444;">Points</th>
+                </tr>
+            """, unsafe_allow_html=True)
+            
+            components = [
+                ("Global/Contextual Status", gc_points),
+                ("Thematic Interlinkages", tl_points),
+                ("Means of Implementation", moi_points),
+                ("Indicator Type", it_points),
+                ("Reporting Status", rs_points),
+                ("Total", total_points)
+            ]
+            
+            for name, points in components:
+                bg_color = "#1e4620" if points > 0 else "#4e1c24"
+                text_color = "#4caf50" if points > 0 else "#f44336"
+                if name == "Total":
+                    st.markdown(f"""
+                    <tr style="background-color: #333;">
+                        <td style="padding: 10px; font-weight: bold;">{name}</td>
+                        <td style="padding: 10px; text-align: right; font-weight: bold;">{points:.2f}/5</td>
+                    </tr>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <tr>
+                        <td style="padding: 10px;">{name}</td>
+                        <td style="padding: 10px; text-align: right; background-color: {bg_color}; color: {text_color}; border-radius: 5px;">{points:.2f}</td>
+                    </tr>
+                    """, unsafe_allow_html=True)
+            
+            st.markdown("</table>", unsafe_allow_html=True)
     
+
     # Additional information or actions
     st.divider()
     st.markdown("### Actions")
-    
-    col1, col2, col3 = st.columns(3)
-    
+
+    # Create a 2-column layout for the buttons
+    col1, col2 = st.columns(2)
+
     with col1:
-        if st.button("Edit How this Indicator was Tagged", key="edit_indicator"):
+        if st.button("Edit How this Indicator was Tagged", key="edit_indicator", use_container_width=True):
             # Find the index in the dataframe
             idx = df[df[name_col] == selected_indicator].index[0]
             st.session_state.current_index = idx
             st.session_state.current_tab = "Tag"
             st.rerun()
-    
-    with col2:
-        global_status = bool(selected_row.get('selected_global', 0))
-            
-        if global_status:
-            if st.button("Remove from Global", key="remove_global"):
-                idx = df[df[name_col] == selected_indicator].index[0]
-                st.session_state.df.at[idx, 'selected_global'] = 0
-                st.success(f"Removed {selected_indicator} from Global indicators")
-                st.rerun()
-        else:
-            if st.button("Add to Global", key="add_global"):
-                idx = df[df[name_col] == selected_indicator].index[0]
-                st.session_state.df.at[idx, 'selected_global'] = 1
-                st.success(f"Added {selected_indicator} to Global indicators")
-                st.rerun()
-    
-    with col3:
-        contextual_status = bool(selected_row.get('selected_contextual', 0))
 
-        if contextual_status:
-            if st.button("Remove from Contextual", key="remove_contextual"):
-                idx = df[df[name_col] == selected_indicator].index[0]
-                st.session_state.df.at[idx, 'selected_contextual'] = 0
-                st.success(f"Removed {selected_indicator} from Contextual indicators")
-                st.rerun()
-        else:
-            if st.button("Add to Contextual", key="add_contextual"):
-                idx = df[df[name_col] == selected_indicator].index[0]
-                st.session_state.df.at[idx, 'selected_contextual'] = 1
-                st.success(f"Added {selected_indicator} to Contextual indicators")
-                st.rerun()
-
-        # Add a fourth column for the download button
-    st.divider()
-    
-    # Get the updated selection count after any changes
-    updated_selected_df = df[(df['selected_global'] == 1) | (df['selected_contextual'] == 1)].copy()
-    
-    # Create download button with conditional styling
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Save All Changes"):
-            user_file = f'updated_{st.session_state.username}.xlsx'
-            result = save_user_data(df=st.session_state.df, filename=user_file, drive_folder_id=DRIVE_FOLDER_ID)
-            st.success(f"All changes saved! {result}")
-            st.session_state.details_page_changes = False
-    
     with col2:
-        button_label = "Download Updated Indicators" if st.session_state.details_page_changes else "Download Selected Indicators"
-        button_help = "Download indicators with recent changes" if st.session_state.details_page_changes else ""
-        
-        # Prepare download buffer
+        # Prepare download buffer with only the current indicator's data
+        single_df = df[df[name_col] == selected_indicator].copy()
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            updated_selected_df.to_excel(writer, index=False)
+            single_df.to_excel(writer, index=False)
         output.seek(0)
         
         st.download_button(
-            label=button_label,
+            "Download Current Indicator Data",
             data=output,
-            file_name=f"selected_indicators_{st.session_state.username}.xlsx",
+            file_name=f"{selected_indicator.replace(' ', '_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help=button_help
+            use_container_width=True
         )
-
-# --- ADMIN FUNCTIONS ---
-def admin_panel():
-    """Additional admin functions"""
-    if st.session_state.username != 'admin':
-        return
-    
-    st.markdown('<div class="sub-header">Administrator Panel</div>', unsafe_allow_html=True)
-    
-    st.markdown("### Admin Functions")
-    
-    tab1, tab2 = st.tabs(["Download Options", "User Management"])
-    
-    with tab1:
-        st.markdown("#### Download Options")
-        
-        if st.button("Download All User Files as ZIP"):
-            # Create a temporary ZIP file
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                zip_path = os.path.join(tmpdirname, "all_user_updates.zip")
-                with zipfile.ZipFile(zip_path, "w") as zipf:
-                    for file in os.listdir():
-                        if file.startswith("updated_") and file.endswith(".xlsx"):
-                            zipf.write(file, arcname=file)
-
-                # Read the ZIP file as bytes and provide a download button
-                with open(zip_path, "rb") as f:
-                    zip_bytes = f.read()
-                st.download_button(
-                    label="Click here to download all user Excel files",
-                    data=zip_bytes,
-                    file_name="all_user_updates.zip",
-                    mime="application/zip"
-                )
-        
-        st.markdown("#### Generate Excel Files from Template")
-        if st.button("Generate Excel files from template"):
-            df = st.session_state.df
-
-            # Check if template file exists
-            if not os.path.exists(TEMPLATE_FILE):
-                st.error(f"Template file '{TEMPLATE_FILE}' not found.")
-                return
-
-            # Output directory
-            output_folder = "generated_indicators"
-            os.makedirs(output_folder, exist_ok=True)
-
-            count = 0
-            count_global = 0
-            count_contextual = 0
-            for i, row in df.iterrows():
-                if row.get('selected_global', 0) == 1 or row.get('selected_contextual', 0) == 1:
-                    if row.get('selected_global', 0) == 1:
-                        count_global += 1
-                    if row.get('selected_contextual', 0) == 1:
-                        count_contextual += 1
-                    prefix = "global" if row.get('selected_global') == 1 else "contextual"
-                    numero = count_global if row.get('selected_global') == 1 else count_contextual
-                    filename = f"{prefix}_indicator_{numero}.xlsx"
-                    filepath = os.path.join(output_folder, filename)
-
-                    # Copy the Excel template
-                    try:
-                        copyfile(TEMPLATE_FILE, filepath)
-
-                        # Open and edit the copied workbook
-                        wb = load_workbook(filepath)
-                        ws = wb.active
-
-                        # Find ID column
-                        id_col = None
-                        for col_name in ['ID', 'Id', 'id', 'identifier']:
-                            if col_name in df.columns:
-                                id_col = col_name
-                                break
-
-                        # Find name column
-                        name_col = None
-                        for col_name in ['Indicators', 'Name', 'indicator_name', 'IndicatorName']:
-                            if col_name in df.columns:
-                                name_col = col_name
-                                break
-
-                        # Find type column
-                        type_col = 'Indicator Type'
-
-                        if id_col and id_col in df.columns:
-                            ws["A2"] = row.get(id_col, "")
-                        if name_col and name_col in df.columns:
-                            ws["B2"] = row.get(name_col, "")
-                        
-                        # Thematic area
-                        theme_col = 'Thematic Area'
-                        if theme_col in df.columns:
-                            ws["C2"] = row.get(theme_col, "")
-                        
-                        if type_col and type_col in df.columns:
-                            ws["D2"] = row.get(type_col, "")
-                        
-                        # Reporting status
-                        report_col = 'Already reported?'
-                        if report_col in df.columns:
-                            ws["E2"] = row.get(report_col, "")
-
-                        wb.save(filepath)
-                        count += 1
-                    except Exception as e:
-                        st.error(f"Error creating file {filepath}: {e}")
-
-            st.success(f"{count} Excel files generated in folder: {output_folder}")
-    
-    with tab2:
-        st.markdown("#### User Management")
-        
-        st.markdown("Viewing files from all users:")
-        
-        user_files = [f for f in os.listdir() if f.startswith("updated_") and f.endswith(".xlsx")]
-        
-        if user_files:
-            for file in user_files:
-                username = file.replace("updated_", "").replace(".xlsx", "")
-                st.markdown(f"- {username}: {file}")
-        else:
-            st.info("No user files found")
-        
-        if drive_enabled:
-            st.markdown("#### Drive Files")
-            try:
-                query = f"'{DRIVE_FOLDER_ID}' in parents and name contains 'updated_' and name contains '.xlsx'"
-                response = drive_service.files().list(
-                    q=query, 
-                    fields="files(id, name, modifiedTime)", 
-                    orderBy="modifiedTime desc"
-                ).execute()
-                
-                files = response.get('files', [])
-                
-                if files:
-                    st.markdown("Files on Google Drive:")
-                    for file in files:
-                        st.markdown(f"- {file['name']} (ID: {file['id']}, Modified: {file['modifiedTime']})")
-                else:
-                    st.info("No matching files found on Google Drive")
-                    
-            except Exception as e:
-                st.error(f"Error listing Drive files: {e}")
-
-# --- MAIN APP FUNCTION ---
-def main():
-    """Main application function"""
-    # Check authentication
-    if not st.session_state.get('authenticated', False):
-        login_page()
-        return
-    
-    # Initialize session state
-    setup_session_state()
-    
-    # Render app header with tabs
-    app_header()
-    
-    # Display appropriate tab content
-    current_tab = st.session_state.get('current_tab', 'Select')
-    
-    if current_tab == "Select":
-        select_indicators_tab()
-    elif current_tab == "Tag":
-        tag_indicators_tab()
-    elif current_tab == "Details":
-        view_indicator_details_tab()
-    
-    # Show admin panel if admin user
-    if st.session_state.username == 'admin':
-        st.divider()
-        admin_panel()
-
-# --- RUN THE APP ---
-if __name__ == "__main__":
+# --- EXECUTION POINT ---
+if __name__ == '__main__':
     main()
