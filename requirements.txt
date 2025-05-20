@@ -63,3 +63,13 @@ urllib3==2.3.0
 watchdog==6.0.0
 Werkzeug==3.0.6
 zipp==3.21.0
+
+# Visualization packages
+matplotlib==3.7.1
+seaborn==0.12.2
+
+# Google Drive integration (optional)
+google-api-python-client==2.100.0
+google-auth==2.22.0
+google-auth-httplib2==0.1.0
+google-auth-oauthlib==1.0.0

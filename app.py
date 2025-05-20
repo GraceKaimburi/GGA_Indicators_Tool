@@ -155,8 +155,8 @@ except Exception as e:
     st.sidebar.warning(f"Google Drive integration disabled: {e}")
 
 # Default file paths
-DEFAULT_EXCEL_FILE = 'data_to_update_filled.xlsx'
-TEMPLATE_FILE = 'Indicator_sheet.xlsx'
+DEFAULT_EXCEL_FILE = 'Indicators_1000.xlsx'
+TEMPLATE_FILE = 'Indicators_1000.xlsx'
 
 # --- AUTHENTICATION SYSTEM ---
 # User management with simplified credentials
@@ -302,26 +302,21 @@ def save_user_data(df, filename, drive_folder_id=DRIVE_FOLDER_ID):
 # --- MAPPING AND CONSTANTS ---
 def get_column_mapping():
     return {
-        'P': 'Significantly reducing climate-induced water scarcity',
-        'Q': 'Enhancing climate resilience to water-related hazards',
-        'R': 'Towards a climate-resilient water supply',
-        'S': 'Towards a climate-resilient sanitation',
-        'T': 'Access to safe and affordable potable water for all'
+        'water': 'Water',
+        'health': 'Health',
+        'infrastructure': 'Infrastructure',
+        'food': 'Food',
+        'poverty': 'Poverty',
+        'biodiversity': 'Biodiversity',
+        'cultural heritage': 'Cultural Heritage'
     }
 
 def get_gga_targets():
     return [
-        "9a. Water scarcity, sanitation, water supply",
-        "9b. Food & agriculture production and supply",
-        "9c. Health, health services morbidity & mortality",
-        "9d. Ecosystems & biodiversity",
-        "9e. Infrastructure & human settlement",
-        "9f. Poverty eradication & livelihoods",
-        "9g. Cultural heritage",
-        "10a. Impact, vulnerability and risk assessment",
-        "10b. Planning",
-        "10c. Implementation of adaptation action",
-        "10d. Monitoring, evaluation and learning"
+        "Input",
+        "Process",
+        "Output",
+        "Outcome"
     ]
 
 def get_moi_fields():
@@ -371,13 +366,14 @@ def app_header():
 
     col1, col2, col3, col4 = st.columns([3, 3, 3, 1])
     with col1:
-        st.button("Select Indicators", 
-                 on_click=lambda: st.session_state.update(current_tab="Select"),
-                 type="primary" if st.session_state.current_tab == "Select" else "secondary")
-    with col2:
         st.button("Tag Indicators", 
                  on_click=lambda: st.session_state.update(current_tab="Tag"),
                  type="primary" if st.session_state.current_tab == "Tag" else "secondary")
+        
+    with col2:
+        st.button("Select Indicators", 
+                 on_click=lambda: st.session_state.update(current_tab="Select"),
+                 type="primary" if st.session_state.current_tab == "Select" else "secondary")
     with col3:
         st.button("View Indicator Details", 
                  on_click=lambda: st.session_state.update(current_tab="Details"),
@@ -419,49 +415,45 @@ def select_indicators_tab():
         with st.container():
             st.markdown("### Filter Indicators")
             
-            # Check which columns actually exist in the DataFrame
-            available_components = []
-            for component in column_mapping.values():
-                if component in st.session_state.df.columns:
-                    available_components.append(component)
-            
-            if not available_components:
-                st.error("No water component columns found in your data. Please check your Excel file structure.")
-                available_components = ["No components found"]
-            
-            filter_non_empty = st.selectbox(
-                "Filter by water component:",
-                options=available_components,
+            # Check which thematic areas actually exist in the DataFrame
+            thematic_areas = []
+            if 'Thematic Area' in st.session_state.df.columns:
+                thematic_areas = st.session_state.df['Thematic Area'].dropna().unique().tolist()
+            else:
+                st.error("No 'Thematic Area' column found in your data. Please check your Excel file structure.")
+                thematic_areas = ["No thematic areas found"]
+
+            filter_by_theme = st.selectbox(
+                "Filter by thematic area:",
+                options=["All"] + thematic_areas,
                 index=0
             )
             
-            # Find the indicator type column name (input, process, output, outcome)
-            u_column = find_column_by_content(st.session_state.df, ["input", "process", "output", "outcome"])
-            
-            if u_column:
-                u_values = st.session_state.df[u_column].dropna().unique().tolist()
-                selected_u_value = st.selectbox(
+            # Find the indicator type column
+            indicator_type_col = 'Indicator Type'  # Use the actual column name from your Excel
+            if indicator_type_col in st.session_state.df.columns:
+                types = st.session_state.df[indicator_type_col].dropna().unique().tolist()
+                selected_type = st.selectbox(
                     f"Filter by indicator type:",
-                    options=["All"] + u_values,
+                    options=["All"] + types,
                     index=0
                 )
             else:
-                selected_u_value = "All"
-                
+                selected_type = "All"
+                st.warning(f"No '{indicator_type_col}' column found")
+            
             show_full_list_checkbox = st.checkbox("Show full list of relevant components and targets", value=False)
             
             # Apply filters
             filtered_df = st.session_state.df.copy()
             
-            # Fixed filtering to check if column exists
-            if filter_non_empty in filtered_df.columns:
-                filtered_df = filtered_df[filtered_df[filter_non_empty].notna() & (filtered_df[filter_non_empty] != '')]
-            else:
-                if filter_non_empty != "No components found":
-                    st.warning(f"Column '{filter_non_empty}' not found in the data. Showing unfiltered data.")
+            # Apply thematic area filter
+            if filter_by_theme != "All" and 'Thematic Area' in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df['Thematic Area'] == filter_by_theme]
             
-            if selected_u_value != "All" and u_column:
-                filtered_df = filtered_df[filtered_df[u_column] == selected_u_value]
+            # Apply indicator type filter  
+            if selected_type != "All" and indicator_type_col in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df[indicator_type_col] == selected_type]
             
             # Find criteria columns
             crit_columns = find_indicator_criteria_cols(filtered_df)
@@ -485,51 +477,30 @@ def select_indicators_tab():
                     st.info("No records match your filter criteria. Try changing the filters.")
                 
                 for idx, row in filtered_df.iterrows():
-                    indicator_name = row.get('Indicator', f"Indicator {idx}")
+                    indicator_name = row.get('Indicators', f"Indicator {idx}")
                     
-                    # Determine which components this indicator is relevant to
-                    relevant_targets = []
-                    for desc in column_mapping.values():
-                        if desc in row.index and pd.notna(row.get(desc, None)) and row.get(desc, '') != '':
-                            relevant_targets.append(desc)
-                    
-                    # Determine which GGA targets are relevant
-                    gga_targets = get_gga_targets()
-                    gga_relevant = []
-                    for target in gga_targets:
-                        if target in row.index and pd.notna(row[target]) and row[target] != '':
-                            gga_relevant.append(target)
-                    
-                    # Get reporting status
-                    reporting_col = find_column_by_content(filtered_df, ["reported", "reporting", "framework"])
-                    
-                    reporting_status = ""
-                    if reporting_col and reporting_col in row:
-                        reporting_status = str(row.get(reporting_col, '')).strip()
+                    # Determine indicator metadata
+                    thematic_area = row.get('Thematic Area', '')
+                    indicator_type = row.get('Indicator Type', '')
+                    reporting_status = row.get('Already reported?', '')
                     
                     # Display indicator card
                     st.markdown(f"""
                     <div class="indicator-card">
                         <strong>{indicator_name}</strong>
-                        {f" | Score: {row.get('Score', 'N/A')}" if 'Score' in row else ""}
                         <div class="tag-section">
-                            <small>Relevant to {len(relevant_targets)} water components</small>
-                            {f" | <small>Relevant to {len(gga_relevant)} GGA targets</small>" if gga_relevant else ""}
+                            <small>Theme: {thematic_area}</small>
+                            {f" | <small>Type: {indicator_type}</small>" if indicator_type else ""}
                             {f" | <small>{reporting_status}</small>" if reporting_status else ""}
                         </div>
                     """, unsafe_allow_html=True)
                     
                     # Show details if requested
                     if show_full_list_checkbox:
-                        if relevant_targets:
-                            st.markdown("<div style='margin-top:5px'><small><b>Water Components:</b></small></div>", unsafe_allow_html=True)
-                            for target in relevant_targets:
-                                st.markdown(f"<div class='tag-pill'>{target}</div>", unsafe_allow_html=True)
-                        
-                        if gga_relevant:
-                            st.markdown("<div style='margin-top:5px'><small><b>GGA Targets:</b></small></div>", unsafe_allow_html=True)
-                            for target in gga_relevant:
-                                st.markdown(f"<div class='tag-pill'>{target}</div>", unsafe_allow_html=True)
+                        st.markdown("<div style='margin-top:5px'><small><b>Details:</b></small></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='tag-pill'>Theme: {thematic_area}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='tag-pill'>Type: {indicator_type}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='tag-pill'>Status: {reporting_status}</div>", unsafe_allow_html=True)
                     
                     # Selection checkboxes
                     col1, col2 = st.columns(2)
@@ -562,7 +533,7 @@ def select_indicators_tab():
         contextual_selected = st.session_state.df[st.session_state.df['selected_contextual'] == 1]
         
         # Try to find the reporting status column
-        report_col = find_column_by_content(st.session_state.df, ["reported", "reporting", "framework"])
+        report_col = 'Already reported?'  # Use the actual column name from your Excel
         
         # Create statistics tabs
         tab1, tab2 = st.tabs(["Global Indicators", "Contextual Indicators"])
@@ -570,36 +541,31 @@ def select_indicators_tab():
         with tab1:
             st.write(f"**{len(global_selected)} Global Indicators Selected**")
             
-            if report_col and not global_selected.empty:
+            if report_col in global_selected.columns and not global_selected.empty:
                 # Group by reporting status
                 report_counts = global_selected[report_col].value_counts()
                 st.write("Distribution by reporting framework:")
                 for framework, count in report_counts.items():
                     st.write(f"- {framework}: {count}")
             
-            # Show coverage summary
-            if u_column and not global_selected.empty:
-                u_values = global_selected[u_column].dropna().unique().tolist()
-                if u_values:
-                    summary_table = pd.DataFrame(0, 
-                                               index=u_values, 
-                                               columns=column_mapping.values())
-                    
-                    for code, desc in column_mapping.items():
-                        if desc in global_selected.columns:  # Check if column exists
-                            for indicator_type in u_values:
-                                count = global_selected[(global_selected[u_column] == indicator_type) & 
-                                                      (global_selected[desc].notna()) & 
-                                                      (global_selected[desc] != '')].shape[0]
-                                summary_table.at[indicator_type, desc] = count
-                    
-                    st.write("Coverage of water components by indicator type:")
-                    st.dataframe(summary_table, use_container_width=True)
+            # Show coverage by thematic area and indicator type
+            if 'Thematic Area' in global_selected.columns and 'Indicator Type' in global_selected.columns and not global_selected.empty:
+                if len(global_selected) > 0:
+                    st.write("Distribution by thematic area and indicator type:")
+                    pivot_table = pd.pivot_table(
+                        global_selected,
+                        values='selected_global',
+                        index=['Thematic Area'],
+                        columns=['Indicator Type'],
+                        aggfunc='count',
+                        fill_value=0
+                    )
+                    st.dataframe(pivot_table, use_container_width=True)
             
             # Show list of selected indicators
-            if not global_selected.empty:
+            if not global_selected.empty and 'Indicators' in global_selected.columns:
                 st.write("Selected global indicators:")
-                indicators_list = global_selected['Indicator'].tolist()
+                indicators_list = global_selected['Indicators'].tolist()
                 for i, indicator in enumerate(indicators_list):
                     st.write(f"{i+1}. {indicator}")
             else:
@@ -608,36 +574,31 @@ def select_indicators_tab():
         with tab2:
             st.write(f"**{len(contextual_selected)} Contextual Indicators Selected**")
             
-            if report_col and not contextual_selected.empty:
+            if report_col in contextual_selected.columns and not contextual_selected.empty:
                 # Group by reporting status
                 report_counts = contextual_selected[report_col].value_counts()
                 st.write("Distribution by reporting framework:")
                 for framework, count in report_counts.items():
                     st.write(f"- {framework}: {count}")
             
-            # Show coverage summary
-            if u_column and not contextual_selected.empty:
-                u_values = contextual_selected[u_column].dropna().unique().tolist()
-                if u_values:
-                    summary_table = pd.DataFrame(0, 
-                                               index=u_values, 
-                                               columns=column_mapping.values())
-                    
-                    for code, desc in column_mapping.items():
-                        if desc in contextual_selected.columns:  # Check if column exists
-                            for indicator_type in u_values:
-                                count = contextual_selected[(contextual_selected[u_column] == indicator_type) & 
-                                                          (contextual_selected[desc].notna()) & 
-                                                          (contextual_selected[desc] != '')].shape[0]
-                                summary_table.at[indicator_type, desc] = count
-                    
-                    st.write("Coverage of water components by indicator type:")
-                    st.dataframe(summary_table, use_container_width=True)
+            # Show coverage by thematic area and indicator type
+            if 'Thematic Area' in contextual_selected.columns and 'Indicator Type' in contextual_selected.columns and not contextual_selected.empty:
+                if len(contextual_selected) > 0:
+                    st.write("Distribution by thematic area and indicator type:")
+                    pivot_table = pd.pivot_table(
+                        contextual_selected,
+                        values='selected_contextual',
+                        index=['Thematic Area'],
+                        columns=['Indicator Type'],
+                        aggfunc='count',
+                        fill_value=0
+                    )
+                    st.dataframe(pivot_table, use_container_width=True)
             
             # Show list of selected indicators
-            if not contextual_selected.empty:
+            if not contextual_selected.empty and 'Indicators' in contextual_selected.columns:
                 st.write("Selected contextual indicators:")
-                indicators_list = contextual_selected['Indicator'].tolist()
+                indicators_list = contextual_selected['Indicators'].tolist()
                 for i, indicator in enumerate(indicators_list):
                     st.write(f"{i+1}. {indicator}")
             else:
@@ -654,19 +615,28 @@ def select_indicators_tab():
                 st.success(f"Selections saved! {result}")
         
         with col2:
-            # Prepare download buffer
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                st.session_state.df.to_excel(writer, index=False)
-            output.seek(0)
+            # Get only the selected indicators (either global or contextual)
+            selected_df = st.session_state.df[
+                (st.session_state.df['selected_global'] == 1) | 
+                (st.session_state.df['selected_contextual'] == 1)
+            ].copy()
             
-            st.download_button(
-                "Download Selection Data",
-                data=output,
-                file_name=f"water_indicators_{st.session_state.username}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        
+            if len(selected_df) > 0:
+                # Prepare download buffer with only selected records
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    selected_df.to_excel(writer, index=False)
+                output.seek(0)
+                
+                st.download_button(
+                    f"Download Selection ({len(selected_df)} indicators)",
+                    data=output,
+                    file_name=f"selected_indicators_{st.session_state.username}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.warning("No indicators selected yet. Select indicators before downloading.")
+                
         if st.button("Clear All Selections"):
             st.session_state.df['selected_global'] = 0
             st.session_state.df['selected_contextual'] = 0
@@ -705,13 +675,13 @@ def tag_indicators_tab():
             enabling_cols.append(field)
     
     # Try to find indicator type columns
-    type_col = find_column_by_content(df, ["input", "process", "output", "outcome"])
-    report_col = find_column_by_content(df, ["reported", "reporting", "framework"])
+    indicator_type_col = 'Indicator Type'  # Use actual column name from your Excel
+    report_col = 'Already reported?'       # Use actual column name from your Excel
     
     indicator_cols = []
-    if type_col:
-        indicator_cols.append(type_col)
-    if report_col:
+    if indicator_type_col in df.columns:
+        indicator_cols.append(indicator_type_col)
+    if report_col in df.columns:
         indicator_cols.append(report_col)
     
     total_records = len(df)
@@ -790,7 +760,7 @@ def tag_indicators_tab():
     
     # Indicator name
     name_col = None
-    for col_name in ['Indicator', 'Name', 'indicator_name', 'IndicatorName']:
+    for col_name in ['Indicators', 'Name', 'indicator_name', 'IndicatorName']:
         if col_name in df.columns:
             name_col = col_name
             break
@@ -821,66 +791,60 @@ def tag_indicators_tab():
         
         st.divider()
         
-        # GGA Targets section
-        if gga_cols:
-            st.markdown("##### 1. Relevance to GGA Targets")
-            gga_rows = [gga_cols[i:i+3] for i in range(0, len(gga_cols), 3)]
-            
-            for gga_row in gga_rows:
-                cols = st.columns(len(gga_row))
-                for idx, col in enumerate(gga_row):
-                    current_val = str(row.get(col, '')).strip().lower() == 'x'
-                    key = f"{col}_{i}"
-                    updated_values[col] = cols[idx].checkbox(
-                        col, 
-                        value=current_val, 
-                        key=key, 
-                        on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                    )
-        
-        # Water Components section
-        if water_component_cols:
-            st.markdown("##### 2. Relevance to Water Target Components")
-            water_rows = [water_component_cols[i:i+2] for i in range(0, len(water_component_cols), 2)]
-            
-            for water_row in water_rows:
-                cols = st.columns(len(water_row))
-                for idx, col in enumerate(water_row):
-                    current_val = str(row.get(col, '')).strip().lower() == 'x'
-                    key = f"{col}_{i}"
-                    updated_values[col] = cols[idx].checkbox(
-                        col, 
-                        value=current_val, 
-                        key=key, 
-                        on_change=lambda: st.session_state.update({'unsaved_changes': True})
-                    )
-        
-        # Enabling Factors section
-        if enabling_cols:
-            st.markdown("##### 3. Enabling Factors and Means of Implementation")
-            enable_cols_row = st.columns(len(enabling_cols))
-            for idx, col in enumerate(enabling_cols):
-                current_val = str(row.get(col, '')).strip().lower() == 'x'
-                key = f"{col}_{i}"
-                updated_values[col] = enable_cols_row[idx].checkbox(
-                    col, 
-                    value=current_val, 
-                    key=key, 
+        # Thematic Area section
+        thematic_area_col = 'Thematic Area'
+        if thematic_area_col in df.columns:
+            st.markdown("##### 1. Thematic Area")
+            options = sorted(df[thematic_area_col].dropna().unique().tolist())
+            if options:
+                current_val = row.get(thematic_area_col, options[0] if options else "")
+                updated_values[thematic_area_col] = st.selectbox(
+                    "Thematic Area", 
+                    options=options,
+                    index=options.index(current_val) if current_val in options else 0,
+                    key=f"thematic_area_{i}",
                     on_change=lambda: st.session_state.update({'unsaved_changes': True})
                 )
         
-        # Indicator Type section  
+        # Indicator Type section
+        if indicator_type_col in df.columns:
+            st.markdown("##### 2. Indicator Type")
+            options = sorted(df[indicator_type_col].dropna().unique().tolist())
+            if options:
+                current_val = row.get(indicator_type_col, options[0] if options else "")
+                updated_values[indicator_type_col] = st.selectbox(
+                    "Indicator Type", 
+                    options=options,
+                    index=options.index(current_val) if current_val in options else 0,
+                    key=f"indicator_type_{i}",
+                    on_change=lambda: st.session_state.update({'unsaved_changes': True})
+                )
+        
+        # Reporting Status section
+        if report_col in df.columns:
+            st.markdown("##### 3. Reporting Status")
+            options = sorted(df[report_col].dropna().unique().tolist())
+            if options:
+                current_val = row.get(report_col, options[0] if options else "")
+                updated_values[report_col] = st.selectbox(
+                    "Reporting Status", 
+                    options=options,
+                    index=options.index(current_val) if current_val in options else 0,
+                    key=f"reporting_status_{i}",
+                    on_change=lambda: st.session_state.update({'unsaved_changes': True})
+                )
+        
+        # Other attributes section  
         if indicator_cols:
-            st.markdown("##### 4. Indicator Type and Reporting Status")
-            indicator_row = st.columns(len(indicator_cols))
-            for idx, col in enumerate(indicator_cols):
-                if col in row.index:
+            st.markdown("##### 4. Other Attributes")
+            for col in indicator_cols:
+                if col not in [thematic_area_col, indicator_type_col, report_col] and col in row.index:
                     # For dropdown fields
                     options = df[col].dropna().unique().tolist()
                     if options:
                         key = f"{col}_{i}"
                         current_val = row[col] if pd.notna(row[col]) else options[0]
-                        updated_values[col] = indicator_row[idx].selectbox(
+                        updated_values[col] = st.selectbox(
                             col, 
                             options, 
                             index=options.index(current_val) if current_val in options else 0, 
@@ -913,7 +877,7 @@ def view_indicator_details_tab():
     
     # Find indicator name column
     name_col = None
-    for col_name in ['Indicator', 'Name', 'indicator_name', 'IndicatorName']:
+    for col_name in ['Indicators', 'Name', 'indicator_name', 'IndicatorName']:
         if col_name in df.columns:
             name_col = col_name
             break
@@ -922,12 +886,26 @@ def view_indicator_details_tab():
         st.error("Could not find indicator name column in the dataset")
         return
     
-    # Create a dropdown to select an indicator
-    indicators = df[name_col].tolist()
+        # Track if any changes are made for download button activation
+    if 'details_page_changes' not in st.session_state:
+        st.session_state.details_page_changes = False
+    
+    # FILTER: Get only the selected indicators (either global or contextual)
+    selected_df = df[(df['selected_global'] == 1) | (df['selected_contextual'] == 1)].copy()
+    
+    if len(selected_df) == 0:
+        st.warning("No indicators have been selected yet. Please go to the 'Select Indicators' tab to select indicators first.")
+        return
+    
+
+    # Create a dropdown to select an indicator from the SELECTED ones only
+    indicators = selected_df[name_col].tolist()
+    st.write(f"**Select an indicator to view details:** (Showing {len(indicators)} selected indicators)")
     selected_indicator = st.selectbox("Select an indicator to view details:", indicators)
     
     # Get the selected indicator's row
     selected_row = df[df[name_col] == selected_indicator].iloc[0]
+    idx = df[df[name_col] == selected_indicator].index[0]
     
     st.markdown("### Indicator Details")
     
@@ -974,78 +952,36 @@ def view_indicator_details_tab():
             st.write(selected_row[desc_col])
     
     with col2:
-        st.markdown("#### Tagged Categories")
+        st.markdown("#### Indicator Attributes")
         
-        # Create tabs for different tag types
-        tag_tab1, tag_tab2, tag_tab3 = st.tabs(["Water Components", "GGA Targets", "Other Attributes"])
+        # Create tabs for different attribute types
+        tag_tab1, tag_tab2 = st.tabs(["Thematic Information", "Other Attributes"])
         
         with tag_tab1:
-            # Water Components
-            column_mapping = get_column_mapping()
-            water_components = []
-            for desc in column_mapping.values():
-                if desc in selected_row.index and str(selected_row[desc]).strip().lower() == 'x':
-                    water_components.append(desc)
+            # Thematic Area and Type
+            thematic_area = selected_row.get('Thematic Area', 'Not specified')
+            indicator_type = selected_row.get('Indicator Type', 'Not specified')
+            reporting_status = selected_row.get('Already reported?', 'Not specified')
             
-            if water_components:
-                st.markdown("**Tagged Water Components:**")
-                for component in water_components:
-                    st.markdown(f"- {component}")
-            else:
-                st.info("No water components tagged for this indicator")
+            st.markdown(f"**Thematic Area:** {thematic_area}")
+            st.markdown(f"**Indicator Type:** {indicator_type}")
+            st.markdown(f"**Reporting Status:** {reporting_status}")
         
         with tag_tab2:
-            # GGA Targets
-            gga_targets = get_gga_targets()
-            tagged_targets = []
-            for target in gga_targets:
-                if target in selected_row.index and str(selected_row[target]).strip().lower() == 'x':
-                    tagged_targets.append(target)
+            # Other attributes that might be in the dataset
+            other_attributes = []
+            for col in df.columns:
+                if col not in [name_col, 'Thematic Area', 'Indicator Type', 'Already reported?', 
+                              'selected_global', 'selected_contextual']:
+                    if pd.notna(selected_row.get(col)):
+                        other_attributes.append((col, selected_row[col]))
             
-            if tagged_targets:
-                st.markdown("**Tagged GGA Targets:**")
-                for target in tagged_targets:
-                    st.markdown(f"- {target}")
+            if other_attributes:
+                st.markdown("**Other Attributes:**")
+                for attr_name, attr_value in other_attributes:
+                    st.markdown(f"- **{attr_name}:** {attr_value}")
             else:
-                st.info("No GGA targets tagged for this indicator")
-        
-        with tag_tab3:
-            # Other attributes
-            st.markdown("**Other Attributes:**")
-            
-            # Input, Process, Output, Outcome
-            type_col = find_column_by_content(df, ["input", "process", "output", "outcome"])
-            if type_col and type_col in selected_row:
-                st.markdown(f"**Indicator Type:** {selected_row[type_col]}")
-            
-            # Reporting status
-            report_col = find_column_by_content(df, ["reported", "reporting", "framework"])
-            if report_col and report_col in selected_row:
-                st.markdown(f"**Reporting Status:** {selected_row[report_col]}")
-            
-            # MOI fields
-            moi_fields = get_moi_fields()
-            tagged_moi = []
-            for field in moi_fields:
-                if field in selected_row.index and str(selected_row[field]).strip().lower() == 'x':
-                    tagged_moi.append(field)
-            
-            if tagged_moi:
-                st.markdown("**Means of Implementation:**")
-                for moi in tagged_moi:
-                    st.markdown(f"- {moi}")
-            
-            # Score
-            if 'Score' in selected_row:
-                st.markdown(f"**Score:** {selected_row['Score']}")
-            
-            # Check for criteria columns
-            crit_columns = find_indicator_criteria_cols(df)
-            if crit_columns:
-                st.markdown("**Criteria Scores:**")
-                for col in crit_columns:
-                    if col in selected_row:
-                        st.markdown(f"- {col}: {selected_row[col]}")
+                st.info("No additional attributes found")
     
     # Additional information or actions
     st.divider()
@@ -1054,7 +990,7 @@ def view_indicator_details_tab():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("Edit This Indicator", key="edit_indicator"):
+        if st.button("Edit How this Indicator was Tagged", key="edit_indicator"):
             # Find the index in the dataframe
             idx = df[df[name_col] == selected_indicator].index[0]
             st.session_state.current_index = idx
@@ -1063,8 +999,7 @@ def view_indicator_details_tab():
     
     with col2:
         global_status = bool(selected_row.get('selected_global', 0))
-        contextual_status = bool(selected_row.get('selected_contextual', 0))
-        
+            
         if global_status:
             if st.button("Remove from Global", key="remove_global"):
                 idx = df[df[name_col] == selected_indicator].index[0]
@@ -1079,6 +1014,8 @@ def view_indicator_details_tab():
                 st.rerun()
     
     with col3:
+        contextual_status = bool(selected_row.get('selected_contextual', 0))
+
         if contextual_status:
             if st.button("Remove from Contextual", key="remove_contextual"):
                 idx = df[df[name_col] == selected_indicator].index[0]
@@ -1091,6 +1028,40 @@ def view_indicator_details_tab():
                 st.session_state.df.at[idx, 'selected_contextual'] = 1
                 st.success(f"Added {selected_indicator} to Contextual indicators")
                 st.rerun()
+
+        # Add a fourth column for the download button
+    st.divider()
+    
+    # Get the updated selection count after any changes
+    updated_selected_df = df[(df['selected_global'] == 1) | (df['selected_contextual'] == 1)].copy()
+    
+    # Create download button with conditional styling
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Save All Changes"):
+            user_file = f'updated_{st.session_state.username}.xlsx'
+            result = save_user_data(df=st.session_state.df, filename=user_file, drive_folder_id=DRIVE_FOLDER_ID)
+            st.success(f"All changes saved! {result}")
+            st.session_state.details_page_changes = False
+    
+    with col2:
+        button_label = "Download Updated Indicators" if st.session_state.details_page_changes else "Download Selected Indicators"
+        button_help = "Download indicators with recent changes" if st.session_state.details_page_changes else ""
+        
+        # Prepare download buffer
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            updated_selected_df.to_excel(writer, index=False)
+        output.seek(0)
+        
+        st.download_button(
+            label=button_label,
+            data=output,
+            file_name=f"selected_indicators_{st.session_state.username}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help=button_help
+        )
 
 # --- ADMIN FUNCTIONS ---
 def admin_panel():
@@ -1129,17 +1100,6 @@ def admin_panel():
         st.markdown("#### Generate Excel Files from Template")
         if st.button("Generate Excel files from template"):
             df = st.session_state.df
-
-            # Required fields
-            components = list(get_column_mapping().values())
-            moi_fields = get_moi_fields()
-
-            # Helper functions
-            def extract_components(row):
-                return [c for c in components if c in row.index and str(row.get(c)).strip().lower() == 'x']
-
-            def extract_moi_tags(row):
-                return ", ".join([m for m in moi_fields if m in row.index and str(row.get(m)).strip().lower() == 'x'])
 
             # Check if template file exists
             if not os.path.exists(TEMPLATE_FILE):
@@ -1181,22 +1141,31 @@ def admin_panel():
 
                         # Find name column
                         name_col = None
-                        for col_name in ['Indicator', 'Name', 'indicator_name', 'IndicatorName']:
+                        for col_name in ['Indicators', 'Name', 'indicator_name', 'IndicatorName']:
                             if col_name in df.columns:
                                 name_col = col_name
                                 break
 
                         # Find type column
-                        type_col = find_column_by_content(df, ["input", "process", "output", "outcome"])
+                        type_col = 'Indicator Type'
 
-                        if id_col:
+                        if id_col and id_col in df.columns:
                             ws["A2"] = row.get(id_col, "")
-                        if name_col:
+                        if name_col and name_col in df.columns:
                             ws["B2"] = row.get(name_col, "")
-                        ws["C2"] = ", ".join(extract_components(row))
-                        if type_col:
+                        
+                        # Thematic area
+                        theme_col = 'Thematic Area'
+                        if theme_col in df.columns:
+                            ws["C2"] = row.get(theme_col, "")
+                        
+                        if type_col and type_col in df.columns:
                             ws["D2"] = row.get(type_col, "")
-                        ws["E2"] = extract_moi_tags(row)
+                        
+                        # Reporting status
+                        report_col = 'Already reported?'
+                        if report_col in df.columns:
+                            ws["E2"] = row.get(report_col, "")
 
                         wb.save(filepath)
                         count += 1
