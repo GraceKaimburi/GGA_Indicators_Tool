@@ -69,4 +69,6 @@ You can customize the application by modifying these variables in `app.py`:
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the AGNES Business License.
+
+© Grace Kaimburi
